@@ -11,10 +11,10 @@ const repoRoot = path.join(__dirname, "..");
 const cliPath = path.join(repoRoot, "bin", "cvetrace.js");
 const fixturesDir = path.join(__dirname, "fixtures");
 
-async function scanJson(targetDir) {
+async function scanJson(targetDir, extraArgs = []) {
   const { stdout } = await execFileAsync(
     process.execPath,
-    [cliPath, "scan", targetDir, "--json"],
+    [cliPath, "scan", targetDir, "--json", ...extraArgs],
     { cwd: repoRoot }
   );
   return JSON.parse(stdout);
@@ -85,6 +85,27 @@ test(
         .map((v) => v.manifestPath)
     );
     assert.equal(log4jManifests.size, 2, "expected log4j-core reported for both manifests");
+  }
+);
+
+test(
+  "cvetrace scan --exclude skips a fixture's whole directory tree",
+  { timeout: 5 * 60 * 1000 },
+  async () => {
+    const withoutExclude = await scanJson(fixturesDir);
+    assert.ok(
+      withoutExclude.vulnerabilities.some((v) => v.name === "pyyaml"),
+      "expected pyyaml to be reported without --exclude"
+    );
+
+    const withExclude = await scanJson(fixturesDir, ["--exclude", "python-fixture-project/**"]);
+    assert.ok(
+      !withExclude.vulnerabilities.some((v) => v.name === "pyyaml"),
+      "expected pyyaml to be skipped once its directory is excluded"
+    );
+    // The other three fixtures should be unaffected.
+    assert.ok(withExclude.vulnerabilities.some((v) => v.ecosystem === "npm"));
+    assert.ok(withExclude.vulnerabilities.some((v) => v.ecosystem === "Maven"));
   }
 );
 
