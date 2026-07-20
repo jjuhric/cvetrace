@@ -5,7 +5,7 @@ import { buildJsonReport } from "./report/json.js";
 
 // Orchestrates the discover -> trace -> report pipeline.
 export async function scan(targetPath, options = {}) {
-  const discovered = await discover(targetPath);
+  const discovered = await discover(targetPath, { excludes: options.exclude });
   const vulnerabilities = await resolveVulnerabilities(discovered);
 
   if (options.json) {

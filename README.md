@@ -19,7 +19,7 @@ on Windows, macOS, and Linux.
 ## Usage
 
 ```sh
-npx github:jjuhric/cvetrace scan <path-to-project> [--json] [--fail-on <severity>]
+npx github:jjuhric/cvetrace scan <path-to-project> [--json] [--fail-on <severity>] [--exclude <glob>...]
 ```
 
 `npx` downloads and runs cvetrace fresh each time — no install step, but a small
@@ -27,7 +27,7 @@ per-invocation delay. For repeated use, install it once instead:
 
 ```sh
 npm install -g github:jjuhric/cvetrace
-cvetrace scan <path-to-project> [--json] [--fail-on <severity>]
+cvetrace scan <path-to-project> [--json] [--fail-on <severity>] [--exclude <glob>...]
 ```
 
 - `<path-to-project>` — directory to scan. cvetrace walks it, detects manifests
@@ -40,6 +40,15 @@ cvetrace scan <path-to-project> [--json] [--fail-on <severity>]
   gating. Without it, cvetrace always exits `0`, since it's a discovery tool first: it
   reports what it finds ("No known vulnerabilities found." if nothing) without judging
   whether that should block anything, unless you tell it to.
+- `--exclude <glob>` — skip any directory whose path relative to `<path-to-project>`
+  matches the glob (`*` within one path segment, `**` across segments, `?` for a single
+  character). Repeatable: pass `--exclude` more than once to skip several directories.
+  For example, `cvetrace`'s own repo has `test/fixtures/*-fixture-project` directories
+  that deliberately pin vulnerable packages for its test suite — scanning the repo
+  itself with `--exclude 'test/**'` skips them.
+
+Run `cvetrace --help` or `cvetrace scan --help` for the full reference — options,
+examples, exit codes, and what each report field means.
 
 ## How it works
 
@@ -93,12 +102,14 @@ to make (or auto-apply) that call itself.
 ```sh
 npm install
 npm test
-node bin/cvetrace.js scan .
+node bin/cvetrace.js scan . --exclude 'test/**'
 ```
 
 Test fixtures live under `test/fixtures/*-fixture-project`, each pinning a package
 version with a real, well-known CVE, used by `test/e2e.test.js` to verify the whole
-CLI end-to-end against live OSV.dev data.
+CLI end-to-end against live OSV.dev data. Scanning cvetrace's own repo without
+`--exclude 'test/**'` will report those fixtures' intentional CVEs, too — expected, not
+a sign cvetrace itself is vulnerable.
 
 ## License
 

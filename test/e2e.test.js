@@ -11,10 +11,10 @@ const repoRoot = path.join(__dirname, "..");
 const cliPath = path.join(repoRoot, "bin", "cvetrace.js");
 const fixturesDir = path.join(__dirname, "fixtures");
 
-async function scanJson(targetDir) {
+async function scanJson(targetDir, extraArgs = []) {
   const { stdout } = await execFileAsync(
     process.execPath,
-    [cliPath, "scan", targetDir, "--json"],
+    [cliPath, "scan", targetDir, "--json", ...extraArgs],
     { cwd: repoRoot }
   );
   return JSON.parse(stdout);
@@ -88,6 +88,27 @@ test(
   }
 );
 
+test(
+  "cvetrace scan --exclude skips a fixture's whole directory tree",
+  { timeout: 5 * 60 * 1000 },
+  async () => {
+    const withoutExclude = await scanJson(fixturesDir);
+    assert.ok(
+      withoutExclude.vulnerabilities.some((v) => v.name === "pyyaml"),
+      "expected pyyaml to be reported without --exclude"
+    );
+
+    const withExclude = await scanJson(fixturesDir, ["--exclude", "python-fixture-project/**"]);
+    assert.ok(
+      !withExclude.vulnerabilities.some((v) => v.name === "pyyaml"),
+      "expected pyyaml to be skipped once its directory is excluded"
+    );
+    // The other three fixtures should be unaffected.
+    assert.ok(withExclude.vulnerabilities.some((v) => v.ecosystem === "npm"));
+    assert.ok(withExclude.vulnerabilities.some((v) => v.ecosystem === "Maven"));
+  }
+);
+
 test("cvetrace scan exits non-zero when --fail-on threshold is met", async () => {
   await assert.rejects(
     execFileAsync(
@@ -97,4 +118,30 @@ test("cvetrace scan exits non-zero when --fail-on threshold is met", async () =>
     ),
     /Command failed/
   );
+});
+
+test("cvetrace --help shows the root manpage sections, not the scan-only ones", async () => {
+  const { stdout } = await execFileAsync(process.execPath, [cliPath, "--help"], { cwd: repoRoot });
+
+  assert.match(stdout, /REQUIREMENTS/);
+  assert.match(stdout, /QUICK START/);
+  assert.doesNotMatch(stdout, /EXIT STATUS/);
+  assert.doesNotMatch(stdout, /REPORT FIELDS/);
+});
+
+test("cvetrace scan --help shows the scan manpage sections, not the root-only ones", async () => {
+  const { stdout } = await execFileAsync(process.execPath, [cliPath, "scan", "--help"], {
+    cwd: repoRoot,
+  });
+
+  assert.match(stdout, /EXIT STATUS/);
+  assert.match(stdout, /REPORT FIELDS/);
+  assert.doesNotMatch(stdout, /QUICK START/);
+  // --exclude's default accumulator shouldn't leak into the help text as noise.
+  assert.doesNotMatch(stdout, /default: \[\]/);
+});
+
+test("cvetrace with no arguments prints help instead of doing nothing", async () => {
+  const { stdout } = await execFileAsync(process.execPath, [cliPath], { cwd: repoRoot });
+  assert.match(stdout, /Usage: cvetrace/);
 });

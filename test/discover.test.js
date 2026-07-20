@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { discover } from "../src/discover/index.js";
 import { discoverNode } from "../src/discover/node.js";
 import { discoverJava } from "../src/discover/java.js";
 import { discoverPython } from "../src/discover/python.js";
@@ -165,6 +166,32 @@ test("discoverPython maps Pipfile.lock default/develop to production/development
     assert.equal(byName.flask.usageContext, "production");
     assert.equal(byName.pytest.usageContext, "development");
     assert.equal(byName.flask.dependencyScope, "unknown");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("discover() skips directories matching an --exclude glob", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "cvetrace-exclude-"));
+  try {
+    await writeFile(
+      path.join(dir, "package.json"),
+      JSON.stringify({ name: "root", dependencies: { minimist: "0.0.8" } })
+    );
+
+    const excludedDir = path.join(dir, "vendor", "old-project");
+    await mkdir(excludedDir, { recursive: true });
+    await writeFile(
+      path.join(excludedDir, "package.json"),
+      JSON.stringify({ name: "old-project", dependencies: { minimist: "0.0.8" } })
+    );
+
+    const withoutExclude = await discover(dir);
+    assert.equal(withoutExclude.length, 2, "expected both package.json files to be found");
+
+    const withExclude = await discover(dir, { excludes: ["vendor/**"] });
+    assert.equal(withExclude.length, 1, "expected the vendor subtree to be skipped");
+    assert.ok(!withExclude[0].manifestPath.includes("vendor"));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
