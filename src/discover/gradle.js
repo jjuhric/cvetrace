@@ -5,19 +5,27 @@ import path from "node:path";
 import crypto from "node:crypto";
 
 // A throwaway Gradle init script that, for every project in the build, walks each
-// resolvable configuration and prints its fully resolved module coordinates. Running
-// this forces the same configuration-phase evaluation (and dependency resolution) that
-// `gradle dependencies` relies on, but in a flat, easy-to-parse line format instead of
-// Gradle's indented tree output. `help` is used as the task because it exists in every
-// Gradle project and doesn't otherwise build/test anything.
+// resolvable configuration and prints its fully resolved module coordinates, tagged
+// with the configuration name (so callers can classify production vs. test-only by
+// whether every resolving configuration is test-related), plus which coordinates are
+// *directly* declared in a `dependencies {}` block (vs. pulled in transitively) via
+// config.dependencies. Running this forces the same configuration-phase evaluation
+// (and dependency resolution) that `gradle dependencies` relies on, but in a flat,
+// easy-to-parse line format instead of Gradle's indented tree output. `help` is used as
+// the task because it exists in every Gradle project and doesn't otherwise build/test.
 const INIT_SCRIPT = `
 allprojects { proj ->
   proj.afterEvaluate {
     proj.configurations.each { config ->
+      config.dependencies.each { dep ->
+        if (dep.group != null) {
+          println("CVETRACE_DIRECT|" + proj.projectDir.absolutePath + "|" + dep.group + ":" + dep.name)
+        }
+      }
       if (config.canBeResolved) {
         try {
           config.resolvedConfiguration.lenientConfiguration.allModuleDependencies.each { dep ->
-            println("CVETRACE_DEP|" + proj.projectDir.absolutePath + "|" + dep.moduleGroup + ":" + dep.moduleName + ":" + dep.moduleVersion)
+            println("CVETRACE_DEP|" + proj.projectDir.absolutePath + "|" + config.name + "|" + dep.moduleGroup + ":" + dep.moduleName + ":" + dep.moduleVersion)
           }
         } catch (ignored) {
         }
@@ -26,6 +34,13 @@ allprojects { proj ->
   }
 }
 `;
+
+// Configuration names containing "test" (testImplementation, testRuntimeClasspath,
+// androidTestImplementation, ...) are Gradle's standard convention for test-only
+// dependencies. compileOnly is treated as production since it's still needed to compile
+// and ship-adjacent, even though it isn't bundled — erring toward not hiding a real
+// production-relevant CVE behind a wrong "development" tag.
+const TEST_CONFIG_RE = /test/i;
 
 const GRADLE_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -137,21 +152,44 @@ function runGradle({ command, prefixArgs }, cwd, initScriptPath) {
   });
 }
 
-function parseDependencyLines(stdout) {
-  const deps = [];
+// Exported for unit testing without spawning a real Gradle process.
+export function parseDependencyLines(stdout) {
+  const directDeclared = new Set();
+  const resolved = new Map(); // "projectDir|group:artifact:version" -> { projectDir, name, version, configs: Set }
+
   for (const line of stdout.split(/\r?\n/)) {
-    if (!line.startsWith("CVETRACE_DEP|")) continue;
-    const [, projectDir, coordinate] = line.split("|");
-    const [group, artifact, version] = coordinate.split(":");
-    if (!group || !artifact || !version) continue;
+    if (line.startsWith("CVETRACE_DIRECT|")) {
+      const [, projectDir, name] = line.split("|");
+      directDeclared.add(`${projectDir}|${name}`);
+      continue;
+    }
+    if (line.startsWith("CVETRACE_DEP|")) {
+      const [, projectDir, configName, coordinate] = line.split("|");
+      const [group, artifact, version] = coordinate.split(":");
+      if (!group || !artifact || !version) continue;
+
+      const key = `${projectDir}|${group}:${artifact}:${version}`;
+      if (!resolved.has(key)) {
+        resolved.set(key, { projectDir, name: `${group}:${artifact}`, version, configs: new Set() });
+      }
+      resolved.get(key).configs.add(configName);
+    }
+  }
+
+  const deps = [];
+  for (const { projectDir, name, version, configs } of resolved.values()) {
+    const isDirect = directDeclared.has(`${projectDir}|${name}`);
+    const isProduction = [...configs].some((config) => !TEST_CONFIG_RE.test(config));
     deps.push({
       ecosystem: "Maven",
-      name: `${group}:${artifact}`,
+      name,
       version,
       // Gradle always reports projectDir as absolute; relativize so manifestPath reads
       // consistently with the other discoverers, which preserve whatever style (relative
       // or absolute) the scanned target path was given in.
       manifestPath: path.join(path.relative(process.cwd(), projectDir), "build.gradle"),
+      dependencyScope: isDirect ? "direct" : "transitive",
+      usageContext: isProduction ? "production" : "development",
     });
   }
   return deps;
@@ -162,7 +200,7 @@ function parseDependencyLines(stdout) {
 // dependency declarations. Misses anything using variables, `ext {}` properties, or
 // version catalogs, since that requires actually evaluating the build script.
 const GRADLE_DEP_RE =
-  /(?:implementation|api|compile|runtimeOnly|testImplementation)\s*[(]?\s*["']([\w.-]+):([\w.-]+):([\w.\-+]+)["']/g;
+  /(implementation|api|compile|runtimeOnly|testImplementation)\s*[(]?\s*["']([\w.-]+):([\w.-]+):([\w.\-+]+)["']/g;
 
 async function staticFallback(dir) {
   for (const file of ["build.gradle", "build.gradle.kts"]) {
@@ -171,12 +209,15 @@ async function staticFallback(dir) {
     if (text !== null) {
       const deps = [];
       for (const match of text.matchAll(GRADLE_DEP_RE)) {
+        const [, directive, group, artifact, version] = match;
         deps.push({
           ecosystem: "Maven",
-          name: `${match[1]}:${match[2]}`,
-          version: match[3],
+          name: `${group}:${artifact}`,
+          version,
           manifestPath: filePath,
           resolved: false,
+          dependencyScope: "direct",
+          usageContext: TEST_CONFIG_RE.test(directive) ? "development" : "production",
         });
       }
       return deps;
