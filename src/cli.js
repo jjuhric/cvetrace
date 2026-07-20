@@ -14,9 +14,12 @@ DESCRIPTION
   is the fix, is there a faster override -- and rolled into one priority
   score, so a pile of findings can be worked top-down instead of one by one.
 
-  It never edits your files. The report is meant to be acted on -- by you,
-  or by an AI coding agent (GitHub Copilot, Claude Code, etc.) with real
-  codebase access to judge and apply fixes safely.
+  It never edits your files. Each finding's remediationTier field says what
+  to do about it -- apply it directly, propose a plan and wait for
+  approval, or fall back to a mitigation -- so the report is meant to be
+  acted on: by you, or by an AI coding agent (GitHub Copilot, Claude Code,
+  Gemini, etc.) with real codebase access to judge and apply fixes safely.
+  See "Recommended agent workflow" in the README for the intended loop.
 
 REQUIREMENTS
   Node.js 18+ and outbound internet access to api.osv.dev, always.
@@ -69,6 +72,12 @@ REPORT FIELDS
   for exactly what each does and doesn't claim (none of these are proof of
   anything; they're heuristics for working through a pile of findings):
 
+    remediationTier                safe-to-update | needs-approval |
+                                    no-fix-available | unknown-impact -- the
+                                    field to branch on for "what do I do
+                                    about this". See "Recommended agent
+                                    workflow" in the README for the intended
+                                    loop around it.
     priorityScore / priorityLabel  cvetrace's own P1-P4 triage ranking,
                                     combining everything below. Deliberately
                                     worded differently from severity: a

@@ -80,6 +80,7 @@ verdicts** — see the caveats under each one.
 
 | Field | Values | What it actually tells you |
 |---|---|---|
+| `remediationTier` | `safe-to-update` / `needs-approval` / `no-fix-available` / `unknown-impact` | The single field to branch on for "what do I do about this": `safe-to-update` means apply `recommendedVersion`/`overrideSnippet` directly; `needs-approval` means propose a plan and wait for a human before touching anything (a major/breaking bump); `no-fix-available` means read `advisoryDetails` for a workaround instead of a version bump; `unknown-impact` means cvetrace couldn't confirm the jump size, so treat it like `needs-approval`. See [Recommended agent workflow](#recommended-agent-workflow). |
 | `priorityScore` / `priorityLabel` | number / `P1`–`P4` | cvetrace's own triage ranking, combining every field below into one sortable number. The report is sorted by this. Deliberately worded differently from `severity` — a CRITICAL CVE in unused dev-only code can land at `P4`; that's not a contradiction, it's the point. This is cvetrace's own synthesis, not an authoritative risk score. |
 | `dependencyScope` | `direct` / `transitive` / `unknown` | Whether the vulnerable package is declared directly in your manifest, or pulled in by something else you depend on. |
 | `dependencyPath` | array or `null` | For transitive findings **in Node or Gradle** (the only ecosystems cvetrace resolves a real dependency graph for): the chain from a direct dependency down to this package, e.g. `["webpack", "loader-utils", "vulnerable-pkg"]`. `null` for direct dependencies, and always `null` for Maven/Python since those aren't resolved transitively at all. |
@@ -114,6 +115,45 @@ Two ways to dismiss a reviewed-and-accepted finding so it stops showing up on ev
 Ignored findings are dropped from the main report and never count toward `--fail-on`,
 but are never silently discarded — the JSON report's `ignored` array carries every
 dismissed finding in full, plus which mechanism matched and why, for an audit trail.
+
+## Recommended agent workflow
+
+Both a human and an AI coding agent are meant to run cvetrace the same way — `cvetrace
+scan <path> --json` — but an agent (GitHub Copilot, Claude Code/Cowork, Gemini
+Antigravity, etc.) working inside a project's IDE can go further and act on the report
+directly. The intended loop:
+
+1. Run `cvetrace scan . --json` (add `--exclude`/`--ignore`/`--fail-on` as appropriate)
+   and read the `vulnerabilities` array — already sorted by `priorityScore`, highest
+   first. Work through it in that order.
+2. For each finding, branch on `remediationTier`:
+   - **`safe-to-update`** — apply it directly. Bump the package to `recommendedVersion`
+     (or `fixedVersion`, to resolve only this one CVE) in the file named by
+     `manifestPath`, or — if `dependencyScope` is `transitive` — apply `overrideSnippet`
+     instead (it names the exact file and gives the exact snippet: npm/yarn
+     `overrides`, Gradle `resolutionStrategy.force`, or Maven `dependencyManagement`).
+     Then run the project's own install/build/test step to confirm nothing broke, and
+     re-run `cvetrace scan` to confirm the finding is gone before moving to the next one.
+   - **`needs-approval`** — don't change anything yet. Summarize the finding (package,
+     current → target version, why it's a major/breaking bump) and propose a short
+     implementation plan — what files change, what could break, how you'll verify it —
+     then wait for the user to explicitly approve before touching any code.
+   - **`no-fix-available`** — there's no version bump that resolves this yet. Read
+     `advisoryDetails` for a mitigation/workaround (e.g. a config flag) and propose
+     that instead, or just flag it for the user's awareness if no workaround exists.
+   - **`unknown-impact`** — treat the same as `needs-approval`: cvetrace couldn't
+     confirm the size of the version jump, so don't assume it's safe.
+3. When reporting back, use `priorityScore`/`priorityLabel`, `usageContext`, and
+   `codeReference` to explain *why* something ranks where it does — e.g. "this CRITICAL
+   CVE is P4 because it's a dev-only dependency with no code reference found."
+4. If the user says to skip a finding, record that decision instead of just not
+   mentioning it next time: add its id to a `.cvetraceignore` file in the project
+   (with a `# reason` noting who decided and why).
+
+This is a description of the intended workflow, not something cvetrace enforces on its
+own — copy it (or adapt it) into your own project's agent instructions file (`CLAUDE.md`,
+`AGENTS.md`, `.github/copilot-instructions.md`, etc.) if you want an agent working in
+that project to follow it automatically.
 
 ## Ecosystems supported
 

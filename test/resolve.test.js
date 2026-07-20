@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { minimumFixedVersion, classifyVersionJump, addRecommendedVersions } from "../src/trace/resolve.js";
+import {
+  minimumFixedVersion,
+  classifyVersionJump,
+  addRecommendedVersions,
+  classifyRemediationTier,
+} from "../src/trace/resolve.js";
 
 // Regression test for a real bug: an advisory can list several disjoint affected-version
 // intervals for the same package (log4j-core has separate patch lines for 2.0-2.3.x,
@@ -97,4 +102,12 @@ test("addRecommendedVersions keeps packages/manifests independent and handles no
     null,
     "no known fix for any of this package's CVEs -> no recommendation"
   );
+});
+
+test("classifyRemediationTier", () => {
+  assert.equal(classifyRemediationTier(null, "unknown"), "no-fix-available");
+  assert.equal(classifyRemediationTier("1.2.4", "patch"), "safe-to-update");
+  assert.equal(classifyRemediationTier("1.3.0", "minor"), "safe-to-update");
+  assert.equal(classifyRemediationTier("2.0.0", "major"), "needs-approval");
+  assert.equal(classifyRemediationTier("1.x", "unknown"), "unknown-impact");
 });

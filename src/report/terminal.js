@@ -2,6 +2,7 @@ const RESET = "\x1b[0m";
 const color = {
   red: (s) => `\x1b[31m${s}${RESET}`,
   yellow: (s) => `\x1b[33m${s}${RESET}`,
+  green: (s) => `\x1b[32m${s}${RESET}`,
   gray: (s) => `\x1b[90m${s}${RESET}`,
   cyan: (s) => `\x1b[36m${s}${RESET}`,
   bold: (s) => `\x1b[1m${s}${RESET}`,
@@ -44,6 +45,8 @@ export function printTerminalReport(vulnerabilities, ignored = []) {
       `${priorityPaint(`[${v.priorityLabel}]`)} ${color.red(label)} [${paint(v.severity)}] ` +
         `${v.name}@${v.currentVersion}${fixArrow}`
     );
+    const remediationPaint = REMEDIATION_COLOR[v.remediationTier] ?? color.gray;
+    console.log(`  ${remediationPaint(`-> ${REMEDIATION_ACTION[v.remediationTier] ?? v.remediationTier}`)}`);
     console.log(`  ${color.gray(v.manifestPath)}`);
     console.log(`  ${color.gray(describeContext(v))}`);
     if (v.recommendedVersion && v.recommendedVersion !== v.fixedVersion) {
@@ -73,6 +76,23 @@ function printIgnoredFooter(ignored) {
     color.gray(`${ignored.length} ${noun} suppressed via .cvetraceignore/--ignore — see --json for details.`)
   );
 }
+
+// The single call-to-action per finding -- see resolve.js's classifyRemediationTier for
+// exactly what each tier means and doesn't guarantee. Meant to be actionable by a human
+// or an AI agent without needing to cross-reference updateImpact/fixedVersion itself.
+const REMEDIATION_ACTION = {
+  "safe-to-update": "safe to auto-update",
+  "needs-approval": "needs approval before updating (major version bump)",
+  "no-fix-available": "no fix published yet -- see advisory for mitigation guidance",
+  "unknown-impact": "fix version unparseable -- treat like needs-approval",
+};
+
+const REMEDIATION_COLOR = {
+  "safe-to-update": color.green,
+  "needs-approval": color.yellow,
+  "no-fix-available": color.gray,
+  "unknown-impact": color.gray,
+};
 
 const IMPACT_LABEL = {
   patch: "patch bump, likely safe",

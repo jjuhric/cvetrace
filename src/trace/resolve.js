@@ -8,9 +8,9 @@ export const SEVERITY_RANK = { LOW: 1, MODERATE: 2, MEDIUM: 2, HIGH: 3, CRITICAL
 // Batch-queries OSV.dev for every discovered package and merges the results into
 // vulnerability records: { manifestPath, ecosystem, name, currentVersion, id, aliases,
 // summary, advisoryDetails, severity, fixedVersion, recommendedVersion, url,
-// dependencyScope, usageContext, updateImpact }. src/index.js layers on further fields
-// (dependencyPath, overrideSnippet, codeReference, priorityScore/priorityLabel) after
-// this step -- see src/trace/priority.js for why those need to run last.
+// dependencyScope, usageContext, updateImpact, remediationTier }. src/index.js layers
+// on further fields (dependencyPath, overrideSnippet, codeReference, priorityScore/
+// priorityLabel) after this step -- see src/trace/priority.js for why those run last.
 //
 // dependencyScope ("direct"/"transitive"/"unknown") and usageContext
 // ("production"/"development"/"unknown") come from the discoverer (see src/discover/*)
@@ -120,7 +120,28 @@ function buildRecord(pkg, detail) {
     dependencyScope: pkg.dependencyScope ?? "unknown",
     usageContext: pkg.usageContext ?? "unknown",
     updateImpact: classifyVersionJump(pkg.version, fixedVersion),
+    remediationTier: classifyRemediationTier(fixedVersion, classifyVersionJump(pkg.version, fixedVersion)),
   };
+}
+
+// Collapses fixedVersion + updateImpact into one decision an agent or human can branch
+// on directly, instead of everyone re-deriving the same three-way call from those two
+// fields independently (and potentially disagreeing on edge cases):
+//   "safe-to-update"   patch/minor bump, likely backwards-compatible -- apply it.
+//   "needs-approval"   major bump, likely to need code changes -- propose a plan, wait
+//                      for a human to approve before touching anything.
+//   "no-fix-available" no version resolves this specific CVE yet -- see advisoryDetails
+//                      for a workaround/mitigation instead of a version bump.
+//   "unknown-impact"   a fix exists but current/fixed versions weren't both parseable as
+//                      dotted-numeric, so the size of the jump can't be classified --
+//                      treated like needs-approval: safety can't be confirmed either way.
+// Still a heuristic layered on other heuristics, not a safety guarantee -- see
+// updateImpact's own caveat above.
+export function classifyRemediationTier(fixedVersion, updateImpact) {
+  if (!fixedVersion) return "no-fix-available";
+  if (updateImpact === "patch" || updateImpact === "minor") return "safe-to-update";
+  if (updateImpact === "major") return "needs-approval";
+  return "unknown-impact";
 }
 
 // Compares the first differing dotted-numeric segment between the current and fixed
