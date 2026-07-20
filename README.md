@@ -47,6 +47,9 @@ cvetrace scan <path-to-project> [--json] [--fail-on <severity>] [--exclude <glob
   that deliberately pin vulnerable packages for its test suite — scanning the repo
   itself with `--exclude 'test/**'` skips them.
 
+Run `cvetrace --help` or `cvetrace scan --help` for the full reference — options,
+examples, exit codes, and what each report field means.
+
 ## How it works
 
 1. **Discover** — walk the target directory, skip build/dependency dirs

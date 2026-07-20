@@ -119,3 +119,29 @@ test("cvetrace scan exits non-zero when --fail-on threshold is met", async () =>
     /Command failed/
   );
 });
+
+test("cvetrace --help shows the root manpage sections, not the scan-only ones", async () => {
+  const { stdout } = await execFileAsync(process.execPath, [cliPath, "--help"], { cwd: repoRoot });
+
+  assert.match(stdout, /REQUIREMENTS/);
+  assert.match(stdout, /QUICK START/);
+  assert.doesNotMatch(stdout, /EXIT STATUS/);
+  assert.doesNotMatch(stdout, /REPORT FIELDS/);
+});
+
+test("cvetrace scan --help shows the scan manpage sections, not the root-only ones", async () => {
+  const { stdout } = await execFileAsync(process.execPath, [cliPath, "scan", "--help"], {
+    cwd: repoRoot,
+  });
+
+  assert.match(stdout, /EXIT STATUS/);
+  assert.match(stdout, /REPORT FIELDS/);
+  assert.doesNotMatch(stdout, /QUICK START/);
+  // --exclude's default accumulator shouldn't leak into the help text as noise.
+  assert.doesNotMatch(stdout, /default: \[\]/);
+});
+
+test("cvetrace with no arguments prints help instead of doing nothing", async () => {
+  const { stdout } = await execFileAsync(process.execPath, [cliPath], { cwd: repoRoot });
+  assert.match(stdout, /Usage: cvetrace/);
+});
