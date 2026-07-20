@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { minimumFixedVersion, classifyVersionJump } from "../src/trace/resolve.js";
+import {
+  minimumFixedVersion,
+  classifyVersionJump,
+  addRecommendedVersions,
+  classifyRemediationTier,
+} from "../src/trace/resolve.js";
 
 // Regression test for a real bug: an advisory can list several disjoint affected-version
 // intervals for the same package (log4j-core has separate patch lines for 2.0-2.3.x,
@@ -67,4 +72,42 @@ test("classifyVersionJump", () => {
   assert.equal(classifyVersionJump("1.9.0", "2.0.0"), "major");
   assert.equal(classifyVersionJump("1.0.0", null), "unknown");
   assert.equal(classifyVersionJump("not-a-version", "1.0.0"), "unknown");
+});
+
+test("addRecommendedVersions picks the highest fixedVersion across a package's CVEs", () => {
+  const records = [
+    { manifestPath: "pom.xml", name: "pkg", fixedVersion: "2.15.0" },
+    { manifestPath: "pom.xml", name: "pkg", fixedVersion: "2.17.1" },
+    { manifestPath: "pom.xml", name: "pkg", fixedVersion: "2.16.0" },
+  ];
+
+  const result = addRecommendedVersions(records);
+  assert.ok(result.every((r) => r.recommendedVersion === "2.17.1"));
+});
+
+test("addRecommendedVersions keeps packages/manifests independent and handles no known fix", () => {
+  const records = [
+    { manifestPath: "a/pom.xml", name: "pkg", fixedVersion: "1.1.0" },
+    { manifestPath: "b/pom.xml", name: "pkg", fixedVersion: "3.0.0" },
+    { manifestPath: "a/pom.xml", name: "other-pkg", fixedVersion: null },
+  ];
+
+  const result = addRecommendedVersions(records);
+  const byKey = Object.fromEntries(result.map((r) => [`${r.manifestPath}:${r.name}`, r]));
+
+  assert.equal(byKey["a/pom.xml:pkg"].recommendedVersion, "1.1.0");
+  assert.equal(byKey["b/pom.xml:pkg"].recommendedVersion, "3.0.0");
+  assert.equal(
+    byKey["a/pom.xml:other-pkg"].recommendedVersion,
+    null,
+    "no known fix for any of this package's CVEs -> no recommendation"
+  );
+});
+
+test("classifyRemediationTier", () => {
+  assert.equal(classifyRemediationTier(null, "unknown"), "no-fix-available");
+  assert.equal(classifyRemediationTier("1.2.4", "patch"), "safe-to-update");
+  assert.equal(classifyRemediationTier("1.3.0", "minor"), "safe-to-update");
+  assert.equal(classifyRemediationTier("2.0.0", "major"), "needs-approval");
+  assert.equal(classifyRemediationTier("1.x", "unknown"), "unknown-impact");
 });

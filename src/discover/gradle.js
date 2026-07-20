@@ -5,14 +5,16 @@ import path from "node:path";
 import crypto from "node:crypto";
 
 // A throwaway Gradle init script that, for every project in the build, walks each
-// resolvable configuration and prints its fully resolved module coordinates, tagged
-// with the configuration name (so callers can classify production vs. test-only by
-// whether every resolving configuration is test-related), plus which coordinates are
-// *directly* declared in a `dependencies {}` block (vs. pulled in transitively) via
-// config.dependencies. Running this forces the same configuration-phase evaluation
-// (and dependency resolution) that `gradle dependencies` relies on, but in a flat,
-// easy-to-parse line format instead of Gradle's indented tree output. `help` is used as
-// the task because it exists in every Gradle project and doesn't otherwise build/test.
+// resolvable configuration's dependency tree from its first-level (directly declared)
+// dependencies down through ResolvedDependency.children, printing each node reached
+// together with the chain of coordinates from the first-level dependency down to it --
+// this is what dependencyPath is built from (see parseDependencyLines). A node is only
+// visited once per configuration (pathFound), which bounds the walk to one path per
+// node instead of every path in a diamond-shaped graph, and avoids the exponential
+// blowup that would come from printing every possible path. Also emits which
+// coordinates are *directly* declared in a `dependencies {}` block, via
+// config.dependencies. `help` is used as the task because it exists in every Gradle
+// project and doesn't otherwise build/test anything.
 const INIT_SCRIPT = `
 allprojects { proj ->
   proj.afterEvaluate {
@@ -24,8 +26,21 @@ allprojects { proj ->
       }
       if (config.canBeResolved) {
         try {
-          config.resolvedConfiguration.lenientConfiguration.allModuleDependencies.each { dep ->
-            println("CVETRACE_DEP|" + proj.projectDir.absolutePath + "|" + config.name + "|" + dep.moduleGroup + ":" + dep.moduleName + ":" + dep.moduleVersion)
+          def pathFound = new HashSet()
+          def visit
+          visit = { resolvedDep, chain ->
+            def coord = resolvedDep.moduleGroup + ":" + resolvedDep.moduleName + ":" + resolvedDep.moduleVersion
+            def key = config.name + "|" + coord
+            if (pathFound.contains(key)) {
+              return
+            }
+            pathFound.add(key)
+            def newChain = chain + [coord]
+            println("CVETRACE_DEP|" + proj.projectDir.absolutePath + "|" + config.name + "|" + newChain.join(">"))
+            resolvedDep.children.each { child -> visit(child, newChain) }
+          }
+          config.resolvedConfiguration.lenientConfiguration.firstLevelModuleDependencies.each { topLevel ->
+            visit(topLevel, [])
           }
         } catch (ignored) {
         }
@@ -155,7 +170,8 @@ function runGradle({ command, prefixArgs }, cwd, initScriptPath) {
 // Exported for unit testing without spawning a real Gradle process.
 export function parseDependencyLines(stdout) {
   const directDeclared = new Set();
-  const resolved = new Map(); // "projectDir|group:artifact:version" -> { projectDir, name, version, configs: Set }
+  // "projectDir|group:artifact:version" -> { projectDir, name, version, configs, dependencyPath }
+  const resolved = new Map();
 
   for (const line of stdout.split(/\r?\n/)) {
     if (line.startsWith("CVETRACE_DIRECT|")) {
@@ -164,20 +180,31 @@ export function parseDependencyLines(stdout) {
       continue;
     }
     if (line.startsWith("CVETRACE_DEP|")) {
-      const [, projectDir, configName, coordinate] = line.split("|");
-      const [group, artifact, version] = coordinate.split(":");
+      const [, projectDir, configName, chainStr] = line.split("|");
+      const chain = chainStr.split(">");
+      const [group, artifact, version] = chain[chain.length - 1].split(":");
       if (!group || !artifact || !version) continue;
 
       const key = `${projectDir}|${group}:${artifact}:${version}`;
       if (!resolved.has(key)) {
-        resolved.set(key, { projectDir, name: `${group}:${artifact}`, version, configs: new Set() });
+        resolved.set(key, {
+          projectDir,
+          name: `${group}:${artifact}`,
+          version,
+          configs: new Set(),
+          // Drop the version from each hop for display (matches how `name` is
+          // formatted elsewhere); a single-element chain means this *is* a first-level
+          // (direct) dependency, which doesn't need a path.
+          dependencyPath:
+            chain.length > 1 ? chain.map((coord) => coord.split(":").slice(0, 2).join(":")) : null,
+        });
       }
       resolved.get(key).configs.add(configName);
     }
   }
 
   const deps = [];
-  for (const { projectDir, name, version, configs } of resolved.values()) {
+  for (const { projectDir, name, version, configs, dependencyPath } of resolved.values()) {
     const isDirect = directDeclared.has(`${projectDir}|${name}`);
     const isProduction = [...configs].some((config) => !TEST_CONFIG_RE.test(config));
     deps.push({
@@ -190,6 +217,7 @@ export function parseDependencyLines(stdout) {
       manifestPath: path.join(path.relative(process.cwd(), projectDir), "build.gradle"),
       dependencyScope: isDirect ? "direct" : "transitive",
       usageContext: isProduction ? "production" : "development",
+      dependencyPath: isDirect ? null : dependencyPath,
     });
   }
   return deps;
@@ -218,6 +246,7 @@ async function staticFallback(dir) {
           resolved: false,
           dependencyScope: "direct",
           usageContext: TEST_CONFIG_RE.test(directive) ? "development" : "production",
+          dependencyPath: null,
         });
       }
       return deps;

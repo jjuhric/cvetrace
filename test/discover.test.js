@@ -62,10 +62,43 @@ test("discoverNode classifies direct/transitive and production/development via t
       [byName.c.dependencyScope, byName.c.usageContext],
       ["transitive", "production"]
     );
+    assert.deepEqual(byName.c.dependencyPath, ["a", "c"]);
     assert.deepEqual(
       [byName.d.dependencyScope, byName.d.usageContext],
       ["transitive", "development"]
     );
+    assert.deepEqual(byName.d.dependencyPath, ["b", "d"]);
+    assert.equal(byName.a.dependencyPath, null, "direct deps don't need a path");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("discoverNode reconstructs the shortest multi-hop chain to a deeply transitive package", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "cvetrace-node-path-"));
+  try {
+    await writeFile(
+      path.join(dir, "package-lock.json"),
+      JSON.stringify({
+        name: "path-test",
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "path-test", dependencies: { webpack: "1.0.0" } },
+          "node_modules/webpack": { version: "1.0.0", dependencies: { "loader-utils": "1.0.0" } },
+          "node_modules/loader-utils": {
+            version: "1.0.0",
+            dependencies: { "vulnerable-pkg": "1.0.0" },
+          },
+          "node_modules/vulnerable-pkg": { version: "1.0.0" },
+        },
+      })
+    );
+
+    const deps = await discoverNode(dir);
+    const vulnerable = deps.find((d) => d.name === "vulnerable-pkg");
+
+    assert.equal(vulnerable.dependencyScope, "transitive");
+    assert.deepEqual(vulnerable.dependencyPath, ["webpack", "loader-utils", "vulnerable-pkg"]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -135,6 +168,29 @@ test("gradle parseDependencyLines classifies scope from configuration names", ()
     [byName["com.example:test-only-lib"].dependencyScope, byName["com.example:test-only-lib"].usageContext],
     ["direct", "development"]
   );
+});
+
+test("gradle parseDependencyLines reconstructs the dependency chain for transitive deps", () => {
+  const stdout = [
+    "CVETRACE_DIRECT|/proj|com.example:direct-lib",
+    "CVETRACE_DEP|/proj|implementation|com.example:direct-lib:1.0.0",
+    "CVETRACE_DEP|/proj|implementation|com.example:direct-lib:1.0.0>com.example:mid-lib:2.0.0",
+    "CVETRACE_DEP|/proj|implementation|com.example:direct-lib:1.0.0>com.example:mid-lib:2.0.0>com.example:leaf-lib:3.0.0",
+  ].join("\n");
+
+  const deps = parseDependencyLines(stdout);
+  const byName = Object.fromEntries(deps.map((d) => [d.name, d]));
+
+  assert.equal(byName["com.example:direct-lib"].dependencyPath, null);
+  assert.deepEqual(byName["com.example:mid-lib"].dependencyPath, [
+    "com.example:direct-lib",
+    "com.example:mid-lib",
+  ]);
+  assert.deepEqual(byName["com.example:leaf-lib"].dependencyPath, [
+    "com.example:direct-lib",
+    "com.example:mid-lib",
+    "com.example:leaf-lib",
+  ]);
 });
 
 test("discoverPython resolves a pinned requirements.txt dependency and normalizes its name", async () => {

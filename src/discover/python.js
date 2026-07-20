@@ -151,6 +151,9 @@ function makeDep(name, versionSpec, manifestPath, { usageContext, dependencyScop
     manifestPath,
     dependencyScope,
     usageContext,
+    // No transitive resolution for Python yet (see README), so there's never a chain
+    // to show, even for Pipfile.lock's "unknown"-scope entries.
+    dependencyPath: null,
     ...(resolved === false ? { resolved: false } : {}),
   };
 }
