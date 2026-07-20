@@ -5,6 +5,11 @@ Point it at any project directory — Node, Java (Maven or Gradle), or Python �
 scans the dependency manifests for known vulnerabilities, using the free
 [OSV.dev](https://osv.dev) vulnerability database (no API key required).
 
+> Want to run this with nothing installed at all, not even Node? There's an in-progress
+> Go port, [cvetrace-go](https://github.com/jjuhric/cvetrace-go), that compiles to a
+> single static binary with no runtime dependency — currently an early, Node-ecosystem-
+> only slice, with this project as the feature reference for what to port next.
+
 ## Requirements
 
 | Scenario | What you need |
