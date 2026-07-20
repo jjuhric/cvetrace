@@ -37,13 +37,16 @@ export async function resolveVulnerabilities(discovered) {
 // OSV.dev often indexes the same underlying CVE twice for one package/version — once
 // from GitHub Security Advisories (a GHSA-* id) and once from an ecosystem-specific
 // source (e.g. PYSEC-* for PyPI) that aliases the same CVE. Collapse those into a
-// single record so the report doesn't show the same vulnerability twice.
+// single record so the report doesn't show the same vulnerability twice. The key is
+// scoped per manifestPath so that the *same* package/version pinned in two different
+// manifests (e.g. a pom.xml and a build.gradle both on log4j-core 2.14.1) still gets
+// reported once per manifest, instead of the second occurrence being dropped.
 function dedupeByCve(records) {
   const seen = new Set();
   const out = [];
   for (const record of records) {
     const cve = record.aliases.find((alias) => alias.startsWith("CVE-"));
-    const key = `${record.name}@${record.currentVersion}:${cve ?? record.id}`;
+    const key = `${record.manifestPath}:${record.name}@${record.currentVersion}:${cve ?? record.id}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(record);

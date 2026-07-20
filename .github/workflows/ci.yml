@@ -17,5 +17,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+      # Needed for the Gradle e2e fixture: cvetrace shells out to a real Gradle wrapper
+      # to fully resolve build.gradle dependencies (see src/discover/gradle.js).
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
       - run: npm install
       - run: npm test

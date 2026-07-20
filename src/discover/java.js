@@ -3,24 +3,12 @@ import path from "node:path";
 
 // Parses pom.xml (Maven) <dependency> versions, resolving simple ${property} references
 // declared in the same pom's <properties> block, into { ecosystem: "Maven",
-// name: "groupId:artifactId", version } tuples. build.gradle/.kts is supported
-// best-effort via regex — full Gradle resolution requires invoking Gradle itself and
-// is out of scope for v1.
+// name: "groupId:artifactId", version } tuples. Gradle projects are handled separately
+// by ./gradle.js, since they require invoking Gradle itself rather than static parsing.
 export async function discoverJava(dir) {
   const pomText = await readText(path.join(dir, "pom.xml"));
-  if (pomText !== null) {
-    return dedupe(fromPomXml(pomText, path.join(dir, "pom.xml")));
-  }
-
-  for (const gradleFile of ["build.gradle", "build.gradle.kts"]) {
-    const gradlePath = path.join(dir, gradleFile);
-    const gradleText = await readText(gradlePath);
-    if (gradleText !== null) {
-      return dedupe(fromGradle(gradleText, gradlePath));
-    }
-  }
-
-  return [];
+  if (pomText === null) return [];
+  return dedupe(fromPomXml(pomText, path.join(dir, "pom.xml")));
 }
 
 function fromPomXml(text, manifestPath) {
@@ -68,23 +56,6 @@ function resolveProperty(value, properties) {
 function extractTag(block, tag) {
   const match = block.match(new RegExp(`<${tag}>([^<]*)</${tag}>`));
   return match ? match[1].trim() : null;
-}
-
-const GRADLE_DEP_RE =
-  /(?:implementation|api|compile|runtimeOnly|testImplementation)\s*[(]?\s*["']([\w.-]+):([\w.-]+):([\w.\-+]+)["']/g;
-
-function fromGradle(text, manifestPath) {
-  const deps = [];
-  for (const match of text.matchAll(GRADLE_DEP_RE)) {
-    deps.push({
-      ecosystem: "Maven",
-      name: `${match[1]}:${match[2]}`,
-      version: match[3],
-      manifestPath,
-      resolved: false,
-    });
-  }
-  return deps;
 }
 
 function dedupe(deps) {

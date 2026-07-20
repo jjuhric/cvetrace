@@ -53,12 +53,40 @@ test("cvetrace scan reports the known CVE in python-fixture-project", async () =
   assert.equal(new Set(cveIds).size, cveIds.length, "expected no duplicate CVEs");
 });
 
-test("cvetrace scan walks a directory of mixed ecosystems and reports all three", async () => {
-  const report = await scanJson(fixturesDir);
-  const ecosystems = new Set(report.vulnerabilities.map((v) => v.ecosystem));
+// Gradle resolution invokes a real Gradle process (via the fixture's committed wrapper),
+// which downloads its distribution and starts a daemon on first run -- can take a couple
+// of minutes on a cold cache, hence the generous timeout. Requires Java on PATH.
+test(
+  "cvetrace scan reports the known CVE in gradle-fixture-project via real Gradle invocation",
+  { timeout: 5 * 60 * 1000 },
+  async () => {
+    const report = await scanJson(path.join(fixturesDir, "gradle-fixture-project"));
+    assert.ok(
+      report.vulnerabilities.some((v) => v.aliases.includes("CVE-2021-44228")),
+      "expected Log4Shell (CVE-2021-44228) to be reported via real Gradle resolution"
+    );
+  }
+);
 
-  assert.deepEqual([...ecosystems].sort(), ["Maven", "PyPI", "npm"]);
-});
+test(
+  "cvetrace scan walks a directory of mixed ecosystems, reporting all four separately",
+  { timeout: 5 * 60 * 1000 },
+  async () => {
+    const report = await scanJson(fixturesDir);
+    const ecosystems = new Set(report.vulnerabilities.map((v) => v.ecosystem));
+    assert.deepEqual([...ecosystems].sort(), ["Maven", "PyPI", "npm"]);
+
+    // The pom.xml and build.gradle fixtures both pin log4j-core@2.14.1 -- regression
+    // check for a bug where the CVE-dedupe in resolve.js collapsed them into a single
+    // record instead of reporting each manifest's occurrence.
+    const log4jManifests = new Set(
+      report.vulnerabilities
+        .filter((v) => v.name === "org.apache.logging.log4j:log4j-core")
+        .map((v) => v.manifestPath)
+    );
+    assert.equal(log4jManifests.size, 2, "expected log4j-core reported for both manifests");
+  }
+);
 
 test("cvetrace scan exits non-zero when --fail-on threshold is met", async () => {
   await assert.rejects(
