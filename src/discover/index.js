@@ -1,6 +1,8 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { discoverNode } from "./node.js";
+import { discoverJava } from "./java.js";
+import { discoverPython } from "./python.js";
 
 const SKIP_DIRS = new Set([
   "node_modules",
@@ -13,10 +15,11 @@ const SKIP_DIRS = new Set([
   "__pycache__",
 ]);
 
+const PYTHON_MANIFESTS = ["Pipfile.lock", "requirements.txt", "pyproject.toml"];
+const JAVA_MANIFESTS = ["pom.xml", "build.gradle", "build.gradle.kts"];
+
 // Walks the target directory (skipping node_modules, .git, venv, target, build, etc.),
 // detects manifests per ecosystem, and dispatches to the matching parser.
-// TODO(M3/M4): dispatch pom.xml -> discoverJava, requirements.txt/pyproject.toml/
-// Pipfile.lock -> discoverPython once those parsers are implemented.
 export async function discover(targetPath) {
   const results = [];
   await walk(targetPath, results);
@@ -37,6 +40,12 @@ async function walk(dir, results) {
 
   if (fileNames.has("package.json")) {
     results.push(...(await discoverNode(dir)));
+  }
+  if (JAVA_MANIFESTS.some((name) => fileNames.has(name))) {
+    results.push(...(await discoverJava(dir)));
+  }
+  if (PYTHON_MANIFESTS.some((name) => fileNames.has(name))) {
+    results.push(...(await discoverPython(dir)));
   }
 
   for (const entry of entries) {

@@ -29,9 +29,26 @@ export async function resolveVulnerabilities(discovered) {
     }
   }
 
-  return records.sort(
+  return dedupeByCve(records).sort(
     (a, b) => (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0)
   );
+}
+
+// OSV.dev often indexes the same underlying CVE twice for one package/version — once
+// from GitHub Security Advisories (a GHSA-* id) and once from an ecosystem-specific
+// source (e.g. PYSEC-* for PyPI) that aliases the same CVE. Collapse those into a
+// single record so the report doesn't show the same vulnerability twice.
+function dedupeByCve(records) {
+  const seen = new Set();
+  const out = [];
+  for (const record of records) {
+    const cve = record.aliases.find((alias) => alias.startsWith("CVE-"));
+    const key = `${record.name}@${record.currentVersion}:${cve ?? record.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(record);
+  }
+  return out;
 }
 
 function buildRecord(pkg, detail) {
