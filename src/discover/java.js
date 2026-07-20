@@ -5,6 +5,10 @@ import path from "node:path";
 // declared in the same pom's <properties> block, into { ecosystem: "Maven",
 // name: "groupId:artifactId", version } tuples. Gradle projects are handled separately
 // by ./gradle.js, since they require invoking Gradle itself rather than static parsing.
+//
+// Every tuple is tagged dependencyScope: "direct" (pom.xml isn't resolved transitively —
+// see the README limitation) and usageContext: Maven's <scope> maps directly to it
+// ("test" -> development, everything else -> production).
 export async function discoverJava(dir) {
   const pomText = await readText(path.join(dir, "pom.xml"));
   if (pomText === null) return [];
@@ -24,11 +28,15 @@ function fromPomXml(text, manifestPath) {
     const version = resolveProperty(rawVersion, properties);
     if (version.includes("$")) continue; // unresolved property reference — v1 limitation
 
+    const mavenScope = extractTag(block, "scope") ?? "compile";
+
     deps.push({
       ecosystem: "Maven",
       name: `${groupId}:${artifactId}`,
       version,
       manifestPath,
+      dependencyScope: "direct",
+      usageContext: mavenScope === "test" ? "development" : "production",
     });
   }
   return deps;

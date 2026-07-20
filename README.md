@@ -35,6 +35,33 @@ npx github:jjuhric/cvetrace scan <path-to-project> [--json] [--fail-on <severity
 3. **Solutions** — for each vulnerability found, report the minimum version
    that resolves it and a link to the advisory.
 
+## Designed for AI/human-assisted remediation
+
+cvetrace never edits your files. Instead, every finding in the report carries three
+fields meant to help a human — or an AI coding agent (GitHub Copilot, Claude Code, etc.)
+working through the report — triage and fix what's real and safe, without cvetrace
+itself guessing wrong about your codebase:
+
+| Field | Values | What it actually tells you |
+|---|---|---|
+| `dependencyScope` | `direct` / `transitive` / `unknown` | Whether the vulnerable package is declared directly in your manifest, or pulled in by something else you depend on. |
+| `usageContext` | `production` / `development` / `unknown` | Whether the package is reachable from your production dependencies, or only from dev/test/build tooling (`devDependencies`, Maven `test` scope, Gradle `testImplementation`, etc.) that never ships. |
+| `updateImpact` | `patch` / `minor` / `major` / `unknown` | How big a semver jump the fix requires. |
+
+**Read these as triage aids, not verdicts.** `usageContext: development` is a strong
+signal that a "Critical" finding is noise you can deprioritize — it's a very common
+source of false-urgency in scanners like Sonar/Nexus IQ, since a vulnerable test-only
+tool can never be exploited in production. But cvetrace does **not** attempt reachability
+analysis (proving the vulnerable function is actually called) — that's a much harder,
+language-specific static-analysis problem outside its scope.
+
+Likewise, `updateImpact: minor` or `patch` means the fix is *likely* backwards-compatible
+by semver convention, not that it's guaranteed safe — Log4Shell's own fix (2.14.1 →
+2.15.0) is itself a "minor" version bump by this measure. Whoever applies the fix should
+still build and run the test suite before trusting it, which is exactly the judgment call
+cvetrace leaves to a human or an AI agent with actual codebase access, rather than trying
+to make (or auto-apply) that call itself.
+
 ## Ecosystems supported
 
 | Ecosystem | Manifests read | Notes |
