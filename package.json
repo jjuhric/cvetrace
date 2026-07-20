@@ -1,0 +1,35 @@
+{
+  "name": "cvetrace",
+  "version": "0.1.0",
+  "description": "Cross-platform CLI that scans a Node, Java, or Python project directory and reports known CVEs affecting its dependencies, using OSV.dev.",
+  "type": "module",
+  "bin": {
+    "cvetrace": "./bin/cvetrace.js"
+  },
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jjuhric/cvetrace.git"
+  },
+  "keywords": [
+    "cve",
+    "security",
+    "vulnerability",
+    "sca",
+    "osv",
+    "cli",
+    "npm",
+    "maven",
+    "pypi"
+  ],
+  "dependencies": {
+    "commander": "^12.0.0"
+  }
+}
