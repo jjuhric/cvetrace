@@ -1,19 +1,33 @@
 # cvetrace
 
 A cross-platform, terminal-based CVE **discovery, trace, and solutions** tool.
-Point it at any project directory — Node, Java (Maven), or Python — and it scans
-the dependency manifests for known vulnerabilities, using the free
+Point it at any project directory — Node, Java (Maven or Gradle), or Python — and it
+scans the dependency manifests for known vulnerabilities, using the free
 [OSV.dev](https://osv.dev) vulnerability database (no API key required).
 
-Works the same way on Windows, macOS, and Linux, as long as [Node.js](https://nodejs.org)
-(18+) is installed. Scanning a Gradle project additionally needs Java on the machine
-running cvetrace, since Gradle dependencies are resolved by actually invoking Gradle
-(see below) — true for any machine that can build the target project in the first place.
+## Requirements
+
+| Scenario | What you need |
+|---|---|
+| Any scan | [Node.js](https://nodejs.org) 18+ on the machine running cvetrace, and outbound internet access to `api.osv.dev` (the vulnerability lookup) |
+| Scanning a **Gradle** project specifically | Also a JDK on that same machine — cvetrace resolves Gradle dependencies by actually invoking the target project's own Gradle wrapper (see [Ecosystems supported](#ecosystems-supported)), which needs Java to run. Effectively: any machine that can already build the target project. First run also needs internet access to fetch the Gradle distribution (if not already cached) and whatever repositories the build declares (e.g. Maven Central) |
+
+No other setup is required — nothing to install, configure, or authenticate beyond
+having Node (and, for Gradle projects, Java) already on the machine. This is identical
+on Windows, macOS, and Linux.
 
 ## Usage
 
 ```sh
 npx github:jjuhric/cvetrace scan <path-to-project> [--json] [--fail-on <severity>]
+```
+
+`npx` downloads and runs cvetrace fresh each time — no install step, but a small
+per-invocation delay. For repeated use, install it once instead:
+
+```sh
+npm install -g github:jjuhric/cvetrace
+cvetrace scan <path-to-project> [--json] [--fail-on <severity>]
 ```
 
 - `<path-to-project>` — directory to scan. cvetrace walks it, detects manifests
@@ -22,7 +36,10 @@ npx github:jjuhric/cvetrace scan <path-to-project> [--json] [--fail-on <severity
   each resolved dependency version.
 - `--json` — emit a machine-readable JSON report instead of the terminal report.
 - `--fail-on <severity>` — exit non-zero if a vulnerability at or above the given
-  severity (`low`, `moderate`, `high`, `critical`) is found — useful for CI gating.
+  severity (`low`, `moderate`/`medium`, `high`, `critical`) is found — useful for CI
+  gating. Without it, cvetrace always exits `0`, since it's a discovery tool first: it
+  reports what it finds ("No known vulnerabilities found." if nothing) without judging
+  whether that should block anything, unless you tell it to.
 
 ## How it works
 
