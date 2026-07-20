@@ -33,6 +33,7 @@ export function printTerminalReport(vulnerabilities) {
         `  ${color.red(label)} ${v.name}@${v.currentVersion} ` +
           `[${paint(v.severity)}] -> fix: ${v.fixedVersion ?? "unknown"}`
       );
+      console.log(`    ${color.gray(describeContext(v))}`);
       if (v.summary) console.log(`    ${color.gray(v.summary)}`);
       console.log(`    ${color.cyan(v.url)}`);
     }
@@ -41,6 +42,23 @@ export function printTerminalReport(vulnerabilities) {
 
   const noun = vulnerabilities.length === 1 ? "vulnerability" : "vulnerabilities";
   console.log(color.bold(`${vulnerabilities.length} ${noun} found.`));
+}
+
+const IMPACT_LABEL = {
+  patch: "patch bump, likely safe",
+  minor: "minor bump, likely safe",
+  major: "major bump — review before applying",
+  unknown: "fix version unknown",
+};
+
+// A one-line triage summary: dependency scope/usage (a noise-reduction heuristic, not
+// proof the vulnerable code path is reachable) and the size of the version jump to fix
+// it (a semver-distance heuristic, not proof the update is non-breaking). See
+// src/trace/resolve.js for what these fields do and don't claim.
+function describeContext(v) {
+  const parts = [v.dependencyScope, v.usageContext].filter((p) => p && p !== "unknown");
+  parts.push(IMPACT_LABEL[v.updateImpact] ?? IMPACT_LABEL.unknown);
+  return parts.join(" · ");
 }
 
 function groupByManifest(vulnerabilities) {
