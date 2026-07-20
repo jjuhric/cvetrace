@@ -37,6 +37,9 @@ function fromPomXml(text, manifestPath) {
       manifestPath,
       dependencyScope: "direct",
       usageContext: mavenScope === "test" ? "development" : "production",
+      // pom.xml isn't resolved transitively (see README), so every discovered
+      // dependency is direct and has no chain to show.
+      dependencyPath: null,
     });
   }
   return deps;

@@ -4,6 +4,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdtemp, cp, writeFile, rm } from "node:fs/promises";
+import os from "node:os";
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -145,3 +147,59 @@ test("cvetrace with no arguments prints help instead of doing nothing", async ()
   const { stdout } = await execFileAsync(process.execPath, [cliPath], { cwd: repoRoot });
   assert.match(stdout, /Usage: cvetrace/);
 });
+
+test("cvetrace scan --ignore dismisses a specific finding and excludes it from --fail-on", async () => {
+  const target = path.join(fixturesDir, "node-fixture-project");
+
+  const report = await scanJson(target, ["--ignore", "CVE-2020-7598"]);
+  assert.ok(!report.vulnerabilities.some((v) => v.aliases.includes("CVE-2020-7598")));
+  assert.ok(report.vulnerabilities.some((v) => v.aliases.includes("CVE-2021-44906")));
+  assert.equal(report.ignoredCount, 1);
+  assert.equal(report.ignored[0].ignoredVia, "--ignore");
+
+  // CVE-2020-7598 is MODERATE, not CRITICAL, so this would already pass either way --
+  // the real check is that dismissing the one CRITICAL finding (CVE-2021-44906) makes
+  // a critical --fail-on gate pass where it would otherwise fail.
+  await assert.doesNotReject(
+    execFileAsync(
+      process.execPath,
+      [cliPath, "scan", target, "--ignore", "CVE-2021-44906", "--fail-on", "critical"],
+      { cwd: repoRoot }
+    )
+  );
+});
+
+test("cvetrace scan reads .cvetraceignore from the scanned directory, with a reason", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "cvetrace-e2e-ignorefile-"));
+  try {
+    await cp(path.join(fixturesDir, "node-fixture-project"), dir, { recursive: true });
+    await writeFile(
+      path.join(dir, ".cvetraceignore"),
+      "CVE-2021-44906  # reviewed 2026-01-01, accepted risk\n"
+    );
+
+    const report = await scanJson(dir);
+    assert.ok(!report.vulnerabilities.some((v) => v.aliases.includes("CVE-2021-44906")));
+    assert.ok(report.vulnerabilities.some((v) => v.aliases.includes("CVE-2020-7598")));
+
+    const ignoredEntry = report.ignored.find((v) => v.aliases.includes("CVE-2021-44906"));
+    assert.equal(ignoredEntry.ignoredVia, ".cvetraceignore");
+    assert.equal(ignoredEntry.ignoredReason, "reviewed 2026-01-01, accepted risk");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test(
+  "cvetrace scan sorts the report by priorityScore descending, each finding carrying a P1-P4 label",
+  { timeout: 5 * 60 * 1000 },
+  async () => {
+    const report = await scanJson(fixturesDir);
+    assert.ok(report.vulnerabilities.length > 1);
+    assert.ok(report.vulnerabilities.every((v) => /^P[1-4]$/.test(v.priorityLabel)));
+
+    for (let i = 1; i < report.vulnerabilities.length; i++) {
+      assert.ok(report.vulnerabilities[i - 1].priorityScore >= report.vulnerabilities[i].priorityScore);
+    }
+  }
+);

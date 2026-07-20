@@ -7,7 +7,10 @@ export const SEVERITY_RANK = { LOW: 1, MODERATE: 2, MEDIUM: 2, HIGH: 3, CRITICAL
 
 // Batch-queries OSV.dev for every discovered package and merges the results into
 // vulnerability records: { manifestPath, ecosystem, name, currentVersion, id, aliases,
-// summary, severity, fixedVersion, url, dependencyScope, usageContext, updateImpact }.
+// summary, advisoryDetails, severity, fixedVersion, recommendedVersion, url,
+// dependencyScope, usageContext, updateImpact }. src/index.js layers on further fields
+// (dependencyPath, overrideSnippet, codeReference, priorityScore/priorityLabel) after
+// this step -- see src/trace/priority.js for why those need to run last.
 //
 // dependencyScope ("direct"/"transitive"/"unknown") and usageContext
 // ("production"/"development"/"unknown") come from the discoverer (see src/discover/*)
@@ -19,6 +22,11 @@ export const SEVERITY_RANK = { LOW: 1, MODERATE: 2, MEDIUM: 2, HIGH: 3, CRITICAL
 // backwards-compatible, not a guarantee. Whether an update actually breaks the codebase
 // can only be confirmed by building/testing it, which is left to whoever (human or AI
 // agent) applies the fix with full codebase context.
+//
+// recommendedVersion is the single highest fixedVersion across every CVE known for that
+// exact package instance -- "upgrade to X, clears everything" instead of N separate
+// per-CVE targets. advisoryDetails is OSV's full freeform text, which often has a
+// mitigation/workaround section beyond "upgrade" (see resolve.js's buildRecord).
 export async function resolveVulnerabilities(discovered) {
   const batchResults = await queryBatch(discovered);
 
@@ -40,9 +48,34 @@ export async function resolveVulnerabilities(discovered) {
     }
   }
 
-  return dedupeByCve(records).sort(
+  const withRecommendations = addRecommendedVersions(dedupeByCve(records));
+  return withRecommendations.sort(
     (a, b) => (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0)
   );
+}
+
+// Aggregates each package instance's (manifestPath + name) individual CVE fixes into
+// one recommendedVersion: the highest fixedVersion among them, since upgrading to it
+// satisfies every lower one too. Lets a human/AI jump straight to "upgrade to X, clears
+// all N known issues" instead of reconciling N separate per-CVE fix versions (log4j-core
+// alone has 7 in the test fixture, each with its own nearest fix). A record whose own
+// fixedVersion is null (no fix published yet for that specific CVE) is NOT resolved just
+// by reaching recommendedVersion -- see advisoryDetails for mitigation guidance then.
+export function addRecommendedVersions(records) {
+  const maxFixedByPackage = new Map();
+  for (const record of records) {
+    if (!record.fixedVersion) continue;
+    const key = `${record.manifestPath}:${record.name}`;
+    const current = maxFixedByPackage.get(key);
+    if (!current || compareVersions(record.fixedVersion, current) > 0) {
+      maxFixedByPackage.set(key, record.fixedVersion);
+    }
+  }
+
+  return records.map((record) => ({
+    ...record,
+    recommendedVersion: maxFixedByPackage.get(`${record.manifestPath}:${record.name}`) ?? null,
+  }));
 }
 
 // OSV.dev often indexes the same underlying CVE twice for one package/version — once
@@ -75,6 +108,10 @@ function buildRecord(pkg, detail) {
     id: detail.id,
     aliases: detail.aliases ?? [],
     summary: detail.summary ?? "",
+    // OSV.dev's longer freeform advisory text -- often includes a "Remediation Advice"
+    // / mitigation section beyond just "upgrade to X" (e.g. Log4Shell's config-flag
+    // workaround for anyone who can't upgrade immediately). null when OSV has none.
+    advisoryDetails: detail.details ?? null,
     severity: detail.database_specific?.severity ?? "UNKNOWN",
     fixedVersion,
     url:

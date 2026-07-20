@@ -4,10 +4,9 @@ import path from "node:path";
 // Parses package.json + package-lock.json (npm lockfile v2/v3) into
 // { ecosystem: "npm", name, version } tuples, including the resolved
 // transitive tree. Falls back to package.json ranges (best-effort) if no lockfile exists.
-// Each tuple is also tagged with dependencyScope ("direct"/"transitive") and
-// usageContext ("production"/"development") — see buildScopeMap below — so the report
-// can flag the common false-positive case of a vulnerable dev/build-only tool that
-// never ships, without claiming to know whether the vulnerable code is actually called.
+// Each tuple is also tagged with dependencyScope ("direct"/"transitive"), usageContext
+// ("production"/"development"), and -- for transitive deps -- dependencyPath (the chain
+// from a direct dependency down to this package) -- see buildScopeMap below.
 export async function discoverNode(dir) {
   const lockPath = path.join(dir, "package-lock.json");
   const lock = await readJson(lockPath);
@@ -37,9 +36,11 @@ function fromLockfilePackages(packages, manifestPath) {
 }
 
 // Determines, for every package name in the lockfile, whether it's declared directly
-// in the root manifest (vs. pulled in transitively) and whether it's reachable from
-// production dependencies, dev dependencies, or both — by walking the lockfile's own
-// per-package "dependencies" declarations as a name-keyed graph, seeded from the root
+// in the root manifest (vs. pulled in transitively), whether it's reachable from
+// production dependencies, dev dependencies, or both, and -- for transitive packages --
+// the shortest chain from a direct dependency down to it (e.g. ["webpack",
+// "loader-utils", "vulnerable-pkg"]), by walking the lockfile's own per-package
+// "dependencies" declarations as a name-keyed graph via BFS, seeded from the root
 // entry's dependencies/devDependencies. This is name-based (not per-resolved-instance),
 // so it can be imprecise if a project resolves multiple versions of the same package
 // name — rare in practice given npm's default deduplication.
@@ -61,35 +62,56 @@ function buildScopeMap(packages) {
     for (const dep of required) requiresByName.get(name).add(dep);
   }
 
-  const prodReachable = bfsReachable(prodDirect, requiresByName);
-  const devReachable = bfsReachable(devDirect, requiresByName);
+  const prodPredecessors = bfsPredecessors(prodDirect, requiresByName);
+  const devPredecessors = bfsPredecessors(devDirect, requiresByName);
 
   return {
     classify(name) {
       const dependencyScope = prodDirect.has(name) || devDirect.has(name) ? "direct" : "transitive";
-      const usageContext = prodReachable.has(name)
+      const usageContext = prodPredecessors.has(name)
         ? "production"
-        : devReachable.has(name)
+        : devPredecessors.has(name)
           ? "development"
           : "unknown";
-      return { dependencyScope, usageContext };
+      const predecessors = usageContext === "production" ? prodPredecessors : devPredecessors;
+      const dependencyPath =
+        dependencyScope === "transitive" ? reconstructPath(name, predecessors) : null;
+      return { dependencyScope, usageContext, dependencyPath };
     },
   };
 }
 
-function bfsReachable(seed, requiresByName) {
-  const seen = new Set(seed);
-  const queue = [...seed];
-  while (queue.length > 0) {
-    const name = queue.pop();
+// Breadth-first, so the reconstructed path is the shortest chain from a direct
+// dependency to any given package -- an index-based queue (not Array#shift) keeps this
+// O(n) rather than O(n^2) on large lockfiles.
+function bfsPredecessors(seed, requiresByName) {
+  const predecessorOf = new Map();
+  const queue = [];
+  for (const name of seed) {
+    predecessorOf.set(name, null);
+    queue.push(name);
+  }
+
+  let head = 0;
+  while (head < queue.length) {
+    const name = queue[head++];
     for (const dep of requiresByName.get(name) ?? []) {
-      if (!seen.has(dep)) {
-        seen.add(dep);
+      if (!predecessorOf.has(dep)) {
+        predecessorOf.set(dep, name);
         queue.push(dep);
       }
     }
   }
-  return seen;
+  return predecessorOf;
+}
+
+function reconstructPath(name, predecessorOf) {
+  if (!predecessorOf.has(name)) return null;
+  const chain = [];
+  for (let current = name; current !== null; current = predecessorOf.get(current)) {
+    chain.unshift(current);
+  }
+  return chain;
 }
 
 function packageNameFromPath(pkgPath) {
@@ -114,6 +136,7 @@ async function discoverNodeFromPackageJson(dir) {
       resolved: false,
       dependencyScope: "direct",
       usageContext,
+      dependencyPath: null,
     }))
   );
 }
